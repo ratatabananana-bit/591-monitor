@@ -60,7 +60,11 @@ def list_listings(
     from datetime import datetime, timezone
     q = db.query(Listing)
     if status:
-        q = q.filter(Listing.status == status)
+        statuses = [s.strip() for s in status.split(',') if s.strip()]
+        if len(statuses) == 1:
+            q = q.filter(Listing.status == statuses[0])
+        else:
+            q = q.filter(Listing.status.in_(statuses))
     if district:
         q = q.filter(Listing.district == district)
     if price_min is not None:

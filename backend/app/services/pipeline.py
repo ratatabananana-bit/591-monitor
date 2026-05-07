@@ -178,8 +178,9 @@ def _upsert_listing(db: Session, raw: dict) -> tuple[Listing, bool]:
 
 
 def _process_missing_listings(db: Session, scraped_ids: set[str]) -> None:
+    # Skip REJECTED/ARCHIVED/UNAVAILABLE — they don't need refresh checks
     active_listings = db.query(Listing).filter(
-        Listing.status.in_(["NEW", "ACTIVE", "WATCHED", "SAVED", "MISSING_ON_SEARCH"])
+        Listing.status.in_(["NEW", "ACTIVE", "WATCHED", "SAVED", "REAPPEARED", "MISSING_ON_SEARCH"])
     ).all()
 
     for listing in active_listings:
