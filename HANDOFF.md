@@ -40,9 +40,9 @@
 ### M4: UX Polish (next)
 - [ ] Picture carousel: arrows to scroll images on listing cards (591 cards have `image-list` slider)
 - [ ] Mass-select checkboxes: bulk reject / delete / status change
-- [ ] Fix Watch tab: WATCHED status → Saved/Watched tab (move from active TAB_STATUSES to saved)
 - [ ] Search Profiles: add district selector (591 district codes per city)
 - [ ] Listing detail: show which profile matched and why (profile name, matched keywords)
+- [ ] Scan History: rewrite to show per-profile technical summary (see below)
 
 ### M5: Data Quality
 - [ ] Scrape listing detail page for actual 上架 date (posted_at) — do lazily on new listings only
@@ -65,6 +65,30 @@
 - Scan History: `frontend/src/pages/ScanHistory.tsx`
 - DB models: `backend/app/models/listing.py`
 - Migrations: `backend/alembic/versions/`
+
+## Scan History Redesign (M4)
+
+Current scan history shows listing thumbnails per scan — user doesn't want that.
+
+**Wanted**: per-scan technical summary:
+- Which profile ran
+- How many new listings added
+- How many listings updated (price change, metadata fill)
+- How many listings gone (→ MISSING_ON_SEARCH or UNAVAILABLE/ARCHIVED)
+
+**Implementation**:
+- Add columns to `scan_runs` table: `updated_listings int`, `gone_listings int`, `profile_name varchar` (or join on profile_id)
+- Pipeline already knows these counts — track them in `run_scan_for_profile`:
+  - `new_count` already tracked
+  - add `updated_count` (price changes + metadata fills on existing listings)
+  - add `gone_count` (listings that transition to MISSING_ON_SEARCH/UNAVAILABLE/ARCHIVED this run)
+- ScanHistory page: replace thumbnail grid with a simple stats row per run:
+  ```
+  ✓  Profile: "Test"  |  +20 new  |  3 updated  |  5 gone  |  30s  |  2026-05-07 15:00
+  ```
+- Expand row → show gone listing IDs/titles (no pictures), updated listing IDs with what changed
+
+**Migration needed**: add `updated_listings`, `gone_listings` int columns to `scan_runs`.
 
 ## Fix for Watch Tab Bug (quick)
 In `frontend/src/pages/Listings.tsx`, change TAB_STATUSES:
