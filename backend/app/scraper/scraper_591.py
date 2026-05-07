@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 import re
@@ -193,56 +194,149 @@ def _filter_by_keywords(listings: list[dict], profile: dict) -> list[dict]:
     return result
 
 
+def _parse_api_response(data: dict) -> list[dict]:
+    """Parse listings from 591 API JSON response."""
+    listings = []
+    # API returns data.data (list of house objects) or data.items
+    items = None
+    if isinstance(data, dict):
+        inner = data.get("data") or data.get("result") or {}
+        if isinstance(inner, dict):
+            items = inner.get("data") or inner.get("items") or inner.get("list") or []
+        elif isinstance(inner, list):
+            items = inner
+
+    if not items:
+        return listings
+
+    for item in items:
+        try:
+            house_id = str(item.get("house_id") or item.get("id") or "")
+            if not house_id or len(house_id) < 5:
+                continue
+            listing: dict = {
+                "listing_id": house_id,
+                "url": f"{BASE_URL}/{house_id}",
+            }
+            # Title
+            listing["title"] = item.get("title") or item.get("house_title") or None
+            # Price — stored as int NT$/mo
+            price_raw = item.get("price") or item.get("rent_price") or ""
+            price_digits = re.sub(r"[^\d]", "", str(price_raw))
+            if price_digits:
+                listing["price"] = int(price_digits)
+            # District / section
+            listing["district"] = (
+                item.get("section_name")
+                or item.get("district_name")
+                or item.get("address")
+                or None
+            )
+            # Size in ping
+            size_raw = str(item.get("area") or item.get("ping") or "")
+            m = re.search(r"([\d.]+)", size_raw)
+            if m:
+                listing["size_ping"] = float(m.group(1))
+            # Room type
+            listing["room_type"] = item.get("kind_name") or item.get("room_type") or None
+
+            listings.append(listing)
+        except Exception as exc:
+            logger.debug("API item parse error: %s", exc)
+
+    return listings
+
+
 def scrape_profile(profile: dict) -> list[dict]:
     """
     Scrape all listings for a search profile.
-    Returns list of raw listing dicts.
+    Intercepts 591's internal API calls via Playwright for reliable data extraction.
+    Falls back to link-only extraction if API not captured.
     """
     mgr = get_browser_manager()
     url = _build_search_url(profile)
     all_listings: list[dict] = []
     seen_ids: set[str] = set()
-    page_num = 1
+
+    # Collect API responses intercepted from the page
+    api_responses: list[dict] = []
+
+    def _on_response(response):
+        try:
+            if "api.591.com.tw" in response.url and response.status == 200:
+                ct = response.headers.get("content-type", "")
+                if "json" in ct:
+                    body = response.json()
+                    logger.debug("Captured API response: %s (%d bytes)", response.url, len(str(body)))
+                    api_responses.append(body)
+        except Exception:
+            pass
 
     with mgr.new_page() as page:
+        page.on("response", _on_response)
         logger.info("Scraping URL: %s", url)
         try:
             page.goto(url, wait_until="networkidle", timeout=30000)
             time.sleep(2)
 
-            # Scroll to trigger lazy-load rendering
+            # Scroll to trigger lazy-load
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
 
-            while page_num <= 20:
+            # Process captured API responses first
+            if api_responses:
+                logger.info("Processing %d intercepted API responses", len(api_responses))
+                for resp_data in api_responses:
+                    parsed = _parse_api_response(resp_data)
+                    for listing in parsed:
+                        if listing["listing_id"] not in seen_ids:
+                            seen_ids.add(listing["listing_id"])
+                            all_listings.append(listing)
+                logger.info("From API: %d listings", len(all_listings))
+
+                # Try paginating if we got results
+                page_num = 2
+                while page_num <= 20 and all_listings:
+                    prev_count = len(all_listings)
+                    api_responses.clear()
+
+                    next_btn = page.query_selector(
+                        ".pageNext:not(.disabled), [class*='next']:not([class*='disabled']), "
+                        "[class*='pagination'] [class*='next']"
+                    )
+                    if not next_btn:
+                        break
+                    next_btn.click()
+                    time.sleep(3)
+
+                    for resp_data in api_responses:
+                        parsed = _parse_api_response(resp_data)
+                        for listing in parsed:
+                            if listing["listing_id"] not in seen_ids:
+                                seen_ids.add(listing["listing_id"])
+                                all_listings.append(listing)
+
+                    if len(all_listings) == prev_count:
+                        break
+                    logger.info("Page %d: total %d listings", page_num, len(all_listings))
+                    page_num += 1
+
+            else:
+                # Fallback: DOM link extraction (no metadata)
+                logger.warning("No API responses captured — falling back to link extraction")
                 listings = _extract_all_listings(page)
-                new_listings = [l for l in listings if l["listing_id"] not in seen_ids]
-
-                if not new_listings:
-                    logger.info("No new listings on page %d, stopping", page_num)
-                    break
-
-                new_listings = _filter_by_keywords(new_listings, profile)
-                for l in new_listings:
-                    seen_ids.add(l["listing_id"])
-                all_listings.extend(new_listings)
-                logger.info("Page %d: %d listings (total: %d)", page_num, len(new_listings), len(all_listings))
-
-                # Try to navigate to next page
-                next_btn = page.query_selector(".pageNext:not(.disabled), [class*='next']:not([class*='disabled'])")
-                if not next_btn:
-                    logger.info("No next page button, done")
-                    break
-
-                next_btn.click()
-                time.sleep(2)
-                page_num += 1
+                for listing in listings:
+                    if listing["listing_id"] not in seen_ids:
+                        seen_ids.add(listing["listing_id"])
+                        all_listings.append(listing)
 
         except PlaywrightTimeout as exc:
             logger.error("Timeout scraping %s: %s", url, exc)
         except Exception as exc:
             logger.error("Error scraping %s: %s", url, exc, exc_info=True)
 
+    # Apply keyword filters
+    all_listings = _filter_by_keywords(all_listings, profile)
     logger.info("Scraped %d total listings for profile", len(all_listings))
     return all_listings
 

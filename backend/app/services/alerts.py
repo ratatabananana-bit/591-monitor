@@ -29,9 +29,10 @@ def _commute_lines(commute_results: list) -> str:
 
 def format_new_listing_alert(listing) -> str:
     commute = _commute_lines(listing.commute_results)
+    price_str = f"NT${listing.price:,}/mo" if listing.price else "Price: N/A"
     return (
         f"🏠 *New Listing*\n"
-        f"💰 NT${listing.price:,}/mo\n"
+        f"💰 {price_str}\n"
         f"📍 {listing.district or 'Unknown'} — {listing.size_ping or '?'}坪\n"
         f"⭐ Score: {listing.score or 0:.0f}/100\n"
         f"{commute}\n"
