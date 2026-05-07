@@ -78,10 +78,23 @@ async def _send_async(text: str) -> None:
 
 
 def send_alert(text: str) -> None:
-    """Sync wrapper — safe to call from worker threads."""
-    try:
+    """Sync wrapper — safe to call from any thread, including those with a running event loop."""
+    import threading
+
+    result_holder: list[Exception | None] = [None]
+
+    def _run():
         loop = asyncio.new_event_loop()
-        loop.run_until_complete(_send_async(text))
-        loop.close()
-    except Exception as exc:
-        logger.error("Failed to send Telegram alert: %s", exc)
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_send_async(text))
+        except Exception as exc:
+            result_holder[0] = exc
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=15)
+    if result_holder[0]:
+        logger.error("Failed to send Telegram alert: %s", result_holder[0])

@@ -200,8 +200,16 @@ def scrape_profile(profile: dict) -> list[dict]:
     with mgr.new_page() as page:
         logger.info("Scraping URL: %s", url)
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            page.goto(url, wait_until="networkidle", timeout=30000)
             time.sleep(3)
+
+            # Debug: log what we actually see
+            final_url = page.url
+            title = page.title()
+            all_links = page.query_selector_all("a[href]")
+            home_links = page.query_selector_all("a[href*='/home/']")
+            logger.info("Page loaded: title=%r url=%s links=%d home_links=%d",
+                        title, final_url, len(all_links), len(home_links))
 
             while page_num <= 20:
                 listings = _extract_all_listings(page)
