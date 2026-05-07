@@ -11,3 +11,9 @@ backend/static/
 *.db
 playwright-profile/
 .eggs/
+.DS_Store
+*.log
+.coverage
+htmlcov/
+.mypy_cache/
+build/
