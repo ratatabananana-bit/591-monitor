@@ -145,8 +145,8 @@ def _upsert_listing(db: Session, raw: dict) -> tuple[Listing, bool]:
             except Exception as exc:
                 logger.warning("Price change alert failed: %s", exc)
 
-    # Update metadata if we got richer data
-    for field in ("title", "district", "size_ping", "room_type", "floor", "thumbnail_url"):
+    # Update metadata if we got richer data (fill in nulls)
+    for field in ("title", "district", "size_ping", "room_type", "floor", "thumbnail_url", "price"):
         val = raw.get(field)
         if val and not getattr(existing, field):
             setattr(existing, field, val)

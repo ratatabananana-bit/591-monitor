@@ -53,9 +53,10 @@ def format_price_change_alert(listing, old_price: int, new_price: int) -> str:
 
 
 def format_reappeared_alert(listing) -> str:
+    price_str = f"NT${listing.price:,}/mo" if listing.price else "Price: N/A"
     return (
         f"🔄 *Listing Reappeared*\n"
-        f"💰 NT${listing.price:,}/mo\n"
+        f"💰 {price_str}\n"
         f"📍 {listing.district or 'Unknown'}\n"
         f"⭐ Score: {listing.score or 0:.0f}/100\n"
         f"🔗 [View Listing]({listing.url})"
