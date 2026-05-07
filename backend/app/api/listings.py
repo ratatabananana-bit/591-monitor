@@ -25,18 +25,17 @@ SORT_FIELDS = {
 
 def _serialize_listing(listing: Listing) -> dict:
     """Serialize listing with commute anchor names."""
-    data = ListingOut.model_validate(listing).model_dump()
-    # Enrich commute_results with anchor names
-    commute_out = []
-    for cr in listing.commute_results:
-        anchor_name = cr.anchor.name if cr.anchor else "Unknown"
-        commute_out.append(CommuteResultOut(
+    commute_out = [
+        CommuteResultOut(
             anchor_id=cr.anchor_id,
-            anchor_name=anchor_name,
+            anchor_name=cr.anchor.name if cr.anchor else "Unknown",
             walk_minutes=cr.walk_minutes,
             transit_minutes=cr.transit_minutes,
             distance_meters=cr.distance_meters,
-        ).model_dump())
+        ).model_dump()
+        for cr in listing.commute_results
+    ]
+    data = ListingOut.model_validate(listing).model_dump()
     data["commute_results"] = commute_out
     return data
 
@@ -68,10 +67,9 @@ def list_listings(
     if score_min is not None:
         q = q.filter(Listing.score >= score_min)
     if transit_max is not None:
-        subq = (
-            db.query(CommuteResult.listing_id)
-            .filter(CommuteResult.transit_minutes <= transit_max)
-            .subquery()
+        from sqlalchemy import select as sa_select
+        subq = sa_select(CommuteResult.listing_id).where(
+            CommuteResult.transit_minutes <= transit_max
         )
         q = q.filter(Listing.id.in_(subq))
     if keyword:

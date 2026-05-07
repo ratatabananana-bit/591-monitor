@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 class CommuteResultOut(BaseModel):
     anchor_id: uuid.UUID
-    anchor_name: str
+    anchor_name: str = ""
     walk_minutes: Optional[int] = None
     transit_minutes: Optional[int] = None
     distance_meters: Optional[int] = None
