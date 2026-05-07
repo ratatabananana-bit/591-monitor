@@ -8,6 +8,9 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://rent.591.com.tw"
 
+# 591 listing URLs: https://rent.591.com.tw/{id}
+_LISTING_ID_RE = re.compile(r"rent\.591\.com\.tw/(\d{5,})$")
+
 CITY_CODES = {
     "taipei": 1,
     "new_taipei": 3,
@@ -50,19 +53,21 @@ def _build_search_url(profile: dict) -> str:
 def _parse_listing_card(card) -> dict | None:
     """Extract listing data from a search result card."""
     try:
-        # Find the link with listing ID
-        link = card.query_selector("a[href*='/home/']")
-        if not link:
+        # Find the link with listing ID — 591 uses rent.591.com.tw/{id}
+        listing_id = None
+        for link in card.query_selector_all("a[href]"):
+            href = link.get_attribute("href") or ""
+            m = _LISTING_ID_RE.search(href)
+            if m:
+                listing_id = m.group(1)
+                break
+
+        if not listing_id:
             return None
-        href = link.get_attribute("href") or ""
-        match = re.search(r"/home/(\d+)", href)
-        if not match:
-            return None
-        listing_id = match.group(1)
 
         result = {
             "listing_id": listing_id,
-            "url": f"{BASE_URL}/home/{listing_id}",
+            "url": f"{BASE_URL}/{listing_id}",
         }
 
         # Title — try multiple selectors
@@ -127,38 +132,40 @@ def _extract_all_listings(page: Page) -> list[dict]:
     """Extract all listing cards visible on the page."""
     listings = []
 
-    # Wait for content
-    try:
-        page.wait_for_selector("section, article, [class*='list'], [class*='item']", timeout=10000)
-    except PlaywrightTimeout:
-        pass
-
-    # Try multiple card selectors — 591 uses different layouts
-    selectors = [
+    # Wait for listing cards — 591 Nuxt app may take a moment to render
+    card_selectors = [
         "section.vue-list-rent-item",
         "[class*='list-item']",
         "[class*='rent-item']",
         "article",
     ]
+    for sel in card_selectors:
+        try:
+            page.wait_for_selector(sel, timeout=8000)
+            break
+        except PlaywrightTimeout:
+            continue
 
+    # Try card selectors
     cards = []
-    for sel in selectors:
+    for sel in card_selectors:
         cards = page.query_selector_all(sel)
         if cards:
             logger.debug("Found %d cards with selector '%s'", len(cards), sel)
             break
 
     if not cards:
-        # Fallback: extract all /home/ links directly from page
-        links = page.query_selector_all("a[href*='/home/']")
-        seen = set()
+        # Fallback: grab all rent.591.com.tw/{id} links directly
+        links = page.query_selector_all("a[href]")
+        seen: set[str] = set()
         for link in links:
             href = link.get_attribute("href") or ""
-            m = re.search(r"/home/(\d+)", href)
+            m = _LISTING_ID_RE.search(href)
             if m and m.group(1) not in seen:
                 lid = m.group(1)
                 seen.add(lid)
-                listings.append({"listing_id": lid, "url": f"{BASE_URL}/home/{lid}"})
+                listings.append({"listing_id": lid, "url": f"{BASE_URL}/{lid}"})
+        logger.info("Fallback link extraction: %d listings", len(listings))
         return listings
 
     for card in cards:
@@ -201,40 +208,11 @@ def scrape_profile(profile: dict) -> list[dict]:
         logger.info("Scraping URL: %s", url)
         try:
             page.goto(url, wait_until="networkidle", timeout=30000)
-            time.sleep(3)
+            time.sleep(2)
 
-            # Debug: log what we actually see
-            final_url = page.url
-            title = page.title()
-            logger.info("Page loaded: title=%r url=%s", title, final_url)
-
-            # Scroll to trigger lazy-load
+            # Scroll to trigger lazy-load rendering
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(3)
-
-            # Find all class names on the page to locate listing containers
-            classes = page.evaluate("""
-                () => {
-                    const all = document.querySelectorAll('[class]');
-                    const seen = new Set();
-                    for (const el of all) {
-                        for (const c of el.classList) seen.add(c);
-                    }
-                    return [...seen].filter(c => c.length > 2).slice(0, 100);
-                }
-            """)
-            logger.info("Page classes: %s", classes)
-
-            # Find links that look like listing detail pages
-            listing_links = page.evaluate("""
-                () => {
-                    const links = [...document.querySelectorAll('a[href]')]
-                        .map(a => a.href)
-                        .filter(h => h && /\\/\\d{5,}/.test(h));
-                    return [...new Set(links)].slice(0, 20);
-                }
-            """)
-            logger.info("Numeric ID links: %s", listing_links)
+            time.sleep(2)
 
             while page_num <= 20:
                 listings = _extract_all_listings(page)
@@ -272,7 +250,7 @@ def scrape_profile(profile: dict) -> list[dict]:
 def check_listing_exists(listing_id: str) -> bool:
     """Check if a listing's detail page still exists (not archived/removed)."""
     mgr = get_browser_manager()
-    url = f"{BASE_URL}/home/{listing_id}"
+    url = f"{BASE_URL}/{listing_id}"
     with mgr.new_page() as page:
         try:
             response = page.goto(url, wait_until="domcontentloaded", timeout=15000)
