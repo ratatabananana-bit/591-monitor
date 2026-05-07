@@ -206,20 +206,35 @@ def scrape_profile(profile: dict) -> list[dict]:
             # Debug: log what we actually see
             final_url = page.url
             title = page.title()
-            all_links = page.query_selector_all("a[href]")
-            home_links = page.query_selector_all("a[href*='/home/']")
-            logger.info("Page loaded: title=%r url=%s links=%d home_links=%d",
-                        title, final_url, len(all_links), len(home_links))
-            # Log sample hrefs to diagnose link pattern
-            sample_hrefs = []
-            for a in all_links[:20]:
-                href = a.get_attribute("href") or ""
-                if href and not href.startswith("javascript") and len(href) > 3:
-                    sample_hrefs.append(href)
-            logger.info("Sample hrefs: %s", sample_hrefs[:15])
-            # Log page classes to find correct card selector
-            body_html = page.inner_html("body")[:3000]
-            logger.info("Body snippet: %s", body_html)
+            logger.info("Page loaded: title=%r url=%s", title, final_url)
+
+            # Scroll to trigger lazy-load
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(3)
+
+            # Find all class names on the page to locate listing containers
+            classes = page.evaluate("""
+                () => {
+                    const all = document.querySelectorAll('[class]');
+                    const seen = new Set();
+                    for (const el of all) {
+                        for (const c of el.classList) seen.add(c);
+                    }
+                    return [...seen].filter(c => c.length > 2).slice(0, 100);
+                }
+            """)
+            logger.info("Page classes: %s", classes)
+
+            # Find links that look like listing detail pages
+            listing_links = page.evaluate("""
+                () => {
+                    const links = [...document.querySelectorAll('a[href]')]
+                        .map(a => a.href)
+                        .filter(h => h && /\\/\\d{5,}/.test(h));
+                    return [...new Set(links)].slice(0, 20);
+                }
+            """)
+            logger.info("Numeric ID links: %s", listing_links)
 
             while page_num <= 20:
                 listings = _extract_all_listings(page)
