@@ -22,6 +22,8 @@ export interface Listing {
   size_ping: number | null
   room_type: string | null
   floor: string | null
+  thumbnail_url: string | null
+  listing_updated_at: string | null
   lat: number | null
   lng: number | null
   status: ListingStatus
@@ -94,6 +96,8 @@ export interface ListingFilters {
   score_min?: number
   transit_max?: number
   keyword?: string
+  first_seen_after?: string
+  first_seen_before?: string
   sort_by?: string
   sort_dir?: string
   page?: number

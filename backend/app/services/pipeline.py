@@ -98,6 +98,7 @@ def _upsert_listing(db: Session, raw: dict) -> tuple[Listing, bool]:
     existing = db.query(Listing).filter(Listing.listing_id == raw["listing_id"]).first()
 
     if not existing:
+        lu = raw.get("listing_updated_at")
         listing = Listing(
             listing_id=raw["listing_id"],
             url=raw["url"],
@@ -108,6 +109,8 @@ def _upsert_listing(db: Session, raw: dict) -> tuple[Listing, bool]:
             size_ping=raw.get("size_ping"),
             room_type=raw.get("room_type"),
             floor=raw.get("floor"),
+            thumbnail_url=raw.get("thumbnail_url"),
+            listing_updated_at=datetime.fromisoformat(lu) if lu else None,
             status="NEW",
             first_seen_at=utcnow(),
             last_seen_at=utcnow(),
@@ -141,6 +144,15 @@ def _upsert_listing(db: Session, raw: dict) -> tuple[Listing, bool]:
                 send_alert(format_price_change_alert(existing, old_price, raw["price"]))
             except Exception as exc:
                 logger.warning("Price change alert failed: %s", exc)
+
+    # Update metadata if we got richer data
+    for field in ("title", "district", "size_ping", "room_type", "floor", "thumbnail_url"):
+        val = raw.get(field)
+        if val and not getattr(existing, field):
+            setattr(existing, field, val)
+    lu = raw.get("listing_updated_at")
+    if lu:
+        existing.listing_updated_at = datetime.fromisoformat(lu)
 
     existing.last_seen_at = utcnow()
     existing.missing_count = 0

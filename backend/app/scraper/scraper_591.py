@@ -1,7 +1,7 @@
-import json
 import logging
-import time
 import re
+import time
+from datetime import datetime, timedelta, timezone
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
 from .browser import get_browser_manager
 
@@ -51,10 +51,23 @@ def _build_search_url(profile: dict) -> str:
     return f"{BASE_URL}/?{'&'.join(params)}"
 
 
+def _parse_relative_date(text: str) -> datetime | None:
+    """Convert '7天前更新', '昨日更新', '今日更新' to UTC datetime."""
+    now = datetime.now(timezone.utc)
+    m = re.search(r"(\d+)天前", text)
+    if m:
+        return now - timedelta(days=int(m.group(1)))
+    if "昨日" in text:
+        return now - timedelta(days=1)
+    if "今日" in text or "剛剛" in text or "小時前" in text or "分鐘前" in text:
+        return now
+    return None
+
+
 def _parse_listing_card(card) -> dict | None:
-    """Extract listing data from a search result card."""
+    """Extract listing data from a .list-wrapper .item card."""
     try:
-        # Find the link with listing ID — 591 uses rent.591.com.tw/{id}
+        # URL + listing ID
         listing_id = None
         for link in card.query_selector_all("a[href]"):
             href = link.get_attribute("href") or ""
@@ -62,67 +75,71 @@ def _parse_listing_card(card) -> dict | None:
             if m:
                 listing_id = m.group(1)
                 break
-
         if not listing_id:
             return None
 
-        result = {
+        result: dict = {
             "listing_id": listing_id,
             "url": f"{BASE_URL}/{listing_id}",
         }
 
-        # Title — try multiple selectors
-        for sel in [".item-title", "[class*='title']", "h3", "[class*='name']"]:
-            el = card.query_selector(sel)
-            if el:
-                text = el.inner_text().strip()
-                if text:
-                    result["title"] = text
-                    break
+        # Thumbnail — lazy-loaded with data-src
+        img = card.query_selector("img[data-src]")
+        if img:
+            result["thumbnail_url"] = img.get_attribute("data-src")
 
-        # Price
-        for sel in [".price-num", "[class*='price']", ".item-price"]:
-            el = card.query_selector(sel)
-            if el:
-                text = re.sub(r"[^\d]", "", el.inner_text())
-                if text:
-                    try:
-                        result["price"] = int(text)
-                    except ValueError:
-                        pass
-                    break
+        # Title — .link.v-middle is the clean title without badges
+        title_el = card.query_selector(".link.v-middle") or card.query_selector(".item-info-title")
+        if title_el:
+            result["title"] = title_el.inner_text().strip()
 
-        # District/area
-        for sel in [".item-area", "[class*='area']", "[class*='region']", "[class*='location']"]:
-            el = card.query_selector(sel)
-            if el:
-                text = el.inner_text().strip()
-                if text:
-                    result["district"] = text
-                    break
+        # Price — .item-info-price
+        price_el = card.query_selector(".item-info-price")
+        if price_el:
+            digits = re.sub(r"[^\d]", "", price_el.inner_text())
+            if digits:
+                result["price"] = int(digits)
 
-        # Size in ping
-        for sel in ["[class*='size']", "[class*='ping']", ".item-size"]:
-            el = card.query_selector(sel)
-            if el:
-                m = re.search(r"([\d.]+)\s*坪", el.inner_text())
+        # Parse .item-info-txt elements for size, floor, room_type, district
+        txt_els = card.query_selector_all(".item-info-txt")
+        for el in txt_els:
+            text = el.inner_text().strip()
+            # Size
+            if "size_ping" not in result:
+                m = re.search(r"([\d.]+)坪", text)
                 if m:
-                    try:
-                        result["size_ping"] = float(m.group(1))
-                    except ValueError:
-                        pass
-                    break
+                    result["size_ping"] = float(m.group(1))
+            # Floor
+            if "floor" not in result:
+                m = re.search(r"(\d+F/\d+F|\d+F)", text)
+                if m:
+                    result["floor"] = m.group(1)
+            # Room type
+            if "room_type" not in result:
+                for rt in ["整層住家", "獨立套房", "分租套房", "雅房"]:
+                    if rt in text:
+                        result["room_type"] = rt
+                        break
+            # District/address — contains 區 or 市
+            if "district" not in result and ("區" in text or "市" in text):
+                # Try inner .inline-flex-row for cleaner text
+                addr_el = el.query_selector(".inline-flex-row")
+                district_text = (addr_el.inner_text().strip() if addr_el else text)
+                # Strip non-address prefix tags (先搶先贏, etc.)
+                district_text = re.sub(r"^[^一-鿿]*", "", district_text).strip()
+                if district_text:
+                    result["district"] = district_text
 
-        # Room type
-        for sel in ["[class*='kind']", "[class*='type']", ".item-kind"]:
-            el = card.query_selector(sel)
-            if el:
-                text = el.inner_text().strip()
-                if text and len(text) < 20:
-                    result["room_type"] = text
-                    break
+        # Update date from "N天前更新" in .line elements
+        for line in card.query_selector_all(".line"):
+            text = line.inner_text().strip()
+            if "更新" in text:
+                dt = _parse_relative_date(text)
+                if dt:
+                    result["listing_updated_at"] = dt.isoformat()
+                break
 
-        return result if "listing_id" in result else None
+        return result
 
     except Exception as exc:
         logger.debug("Card parse error: %s", exc)
@@ -130,50 +147,36 @@ def _parse_listing_card(card) -> dict | None:
 
 
 def _extract_all_listings(page: Page) -> list[dict]:
-    """Extract all listing cards visible on the page."""
+    """Extract all listing cards from the current page."""
     listings = []
 
-    # Wait for listing cards — 591 Nuxt app may take a moment to render
-    card_selectors = [
-        "section.vue-list-rent-item",
-        "[class*='list-item']",
-        "[class*='rent-item']",
-        "article",
-    ]
-    for sel in card_selectors:
-        try:
-            page.wait_for_selector(sel, timeout=8000)
-            break
-        except PlaywrightTimeout:
-            continue
+    # Wait for search result cards
+    try:
+        page.wait_for_selector(".list-wrapper .item", timeout=10000)
+    except PlaywrightTimeout:
+        pass
 
-    # Try card selectors
-    cards = []
-    for sel in card_selectors:
-        cards = page.query_selector_all(sel)
-        if cards:
-            logger.debug("Found %d cards with selector '%s'", len(cards), sel)
-            break
-
-    if not cards:
-        # Fallback: grab all rent.591.com.tw/{id} links directly
-        links = page.query_selector_all("a[href]")
-        seen: set[str] = set()
-        for link in links:
-            href = link.get_attribute("href") or ""
-            m = _LISTING_ID_RE.search(href)
-            if m and m.group(1) not in seen:
-                lid = m.group(1)
-                seen.add(lid)
-                listings.append({"listing_id": lid, "url": f"{BASE_URL}/{lid}"})
-        logger.info("Fallback link extraction: %d listings", len(listings))
+    cards = page.query_selector_all(".list-wrapper .item")
+    if cards:
+        logger.info("Found %d listing cards", len(cards))
+        for card in cards:
+            listing = _parse_listing_card(card)
+            if listing:
+                listings.append(listing)
         return listings
 
-    for card in cards:
-        listing = _parse_listing_card(card)
-        if listing:
-            listings.append(listing)
-
+    # Fallback: extract links only (no metadata)
+    logger.warning("No .list-wrapper .item cards found — falling back to link extraction")
+    links = page.query_selector_all("a[href]")
+    seen: set[str] = set()
+    for link in links:
+        href = link.get_attribute("href") or ""
+        m = _LISTING_ID_RE.search(href)
+        if m and m.group(1) not in seen:
+            lid = m.group(1)
+            seen.add(lid)
+            listings.append({"listing_id": lid, "url": f"{BASE_URL}/{lid}"})
+    logger.info("Fallback link extraction: %d listings", len(listings))
     return listings
 
 
@@ -190,90 +193,24 @@ def _filter_by_keywords(listings: list[dict], profile: dict) -> list[dict]:
         ).lower()
         if rejected and any(kw in text for kw in rejected):
             continue
+        if required and not any(kw in text for kw in required):
+            continue
         result.append(listing)
     return result
 
 
-def _parse_api_response(data: dict) -> list[dict]:
-    """Parse listings from 591 API JSON response."""
-    listings = []
-    # API returns data.data (list of house objects) or data.items
-    items = None
-    if isinstance(data, dict):
-        inner = data.get("data") or data.get("result") or {}
-        if isinstance(inner, dict):
-            items = inner.get("data") or inner.get("items") or inner.get("list") or []
-        elif isinstance(inner, list):
-            items = inner
-
-    if not items:
-        return listings
-
-    for item in items:
-        try:
-            house_id = str(item.get("house_id") or item.get("id") or "")
-            if not house_id or len(house_id) < 5:
-                continue
-            listing: dict = {
-                "listing_id": house_id,
-                "url": f"{BASE_URL}/{house_id}",
-            }
-            # Title
-            listing["title"] = item.get("title") or item.get("house_title") or None
-            # Price — stored as int NT$/mo
-            price_raw = item.get("price") or item.get("rent_price") or ""
-            price_digits = re.sub(r"[^\d]", "", str(price_raw))
-            if price_digits:
-                listing["price"] = int(price_digits)
-            # District / section
-            listing["district"] = (
-                item.get("section_name")
-                or item.get("district_name")
-                or item.get("address")
-                or None
-            )
-            # Size in ping
-            size_raw = str(item.get("area") or item.get("ping") or "")
-            m = re.search(r"([\d.]+)", size_raw)
-            if m:
-                listing["size_ping"] = float(m.group(1))
-            # Room type
-            listing["room_type"] = item.get("kind_name") or item.get("room_type") or None
-
-            listings.append(listing)
-        except Exception as exc:
-            logger.debug("API item parse error: %s", exc)
-
-    return listings
-
-
 def scrape_profile(profile: dict) -> list[dict]:
     """
-    Scrape all listings for a search profile.
-    Intercepts 591's internal API calls via Playwright for reliable data extraction.
-    Falls back to link-only extraction if API not captured.
+    Scrape all listings for a search profile via DOM scraping.
+    Returns list of raw listing dicts with metadata.
     """
     mgr = get_browser_manager()
     url = _build_search_url(profile)
     all_listings: list[dict] = []
     seen_ids: set[str] = set()
-
-    # Collect API responses intercepted from the page
-    api_responses: list[dict] = []
-
-    def _on_response(response):
-        try:
-            if "api.591.com.tw" in response.url and response.status == 200:
-                ct = response.headers.get("content-type", "")
-                if "json" in ct:
-                    body = response.json()
-                    logger.debug("Captured API response: %s (%d bytes)", response.url, len(str(body)))
-                    api_responses.append(body)
-        except Exception:
-            pass
+    page_num = 1
 
     with mgr.new_page() as page:
-        page.on("response", _on_response)
         logger.info("Scraping URL: %s", url)
         try:
             page.goto(url, wait_until="networkidle", timeout=30000)
@@ -283,60 +220,37 @@ def scrape_profile(profile: dict) -> list[dict]:
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
 
-            # Process captured API responses first
-            if api_responses:
-                logger.info("Processing %d intercepted API responses", len(api_responses))
-                for resp_data in api_responses:
-                    parsed = _parse_api_response(resp_data)
-                    for listing in parsed:
-                        if listing["listing_id"] not in seen_ids:
-                            seen_ids.add(listing["listing_id"])
-                            all_listings.append(listing)
-                logger.info("From API: %d listings", len(all_listings))
-
-                # Try paginating if we got results
-                page_num = 2
-                while page_num <= 20 and all_listings:
-                    prev_count = len(all_listings)
-                    api_responses.clear()
-
-                    next_btn = page.query_selector(
-                        ".pageNext:not(.disabled), [class*='next']:not([class*='disabled']), "
-                        "[class*='pagination'] [class*='next']"
-                    )
-                    if not next_btn:
-                        break
-                    next_btn.click()
-                    time.sleep(3)
-
-                    for resp_data in api_responses:
-                        parsed = _parse_api_response(resp_data)
-                        for listing in parsed:
-                            if listing["listing_id"] not in seen_ids:
-                                seen_ids.add(listing["listing_id"])
-                                all_listings.append(listing)
-
-                    if len(all_listings) == prev_count:
-                        break
-                    logger.info("Page %d: total %d listings", page_num, len(all_listings))
-                    page_num += 1
-
-            else:
-                # Fallback: DOM link extraction (no metadata)
-                logger.warning("No API responses captured — falling back to link extraction")
+            while page_num <= 20:
                 listings = _extract_all_listings(page)
-                for listing in listings:
-                    if listing["listing_id"] not in seen_ids:
-                        seen_ids.add(listing["listing_id"])
-                        all_listings.append(listing)
+                new_listings = [l for l in listings if l["listing_id"] not in seen_ids]
+
+                if not new_listings:
+                    logger.info("No new listings on page %d, stopping", page_num)
+                    break
+
+                new_listings = _filter_by_keywords(new_listings, profile)
+                for l in new_listings:
+                    seen_ids.add(l["listing_id"])
+                all_listings.extend(new_listings)
+                logger.info("Page %d: %d listings (total: %d)", page_num, len(new_listings), len(all_listings))
+
+                # Next page
+                next_btn = page.query_selector(
+                    ".pageNext:not(.disabled), [class*='next']:not([class*='disabled'])"
+                )
+                if not next_btn:
+                    logger.info("No next page button, done")
+                    break
+
+                next_btn.click()
+                time.sleep(2)
+                page_num += 1
 
         except PlaywrightTimeout as exc:
             logger.error("Timeout scraping %s: %s", url, exc)
         except Exception as exc:
             logger.error("Error scraping %s: %s", url, exc, exc_info=True)
 
-    # Apply keyword filters
-    all_listings = _filter_by_keywords(all_listings, profile)
     logger.info("Scraped %d total listings for profile", len(all_listings))
     return all_listings
 

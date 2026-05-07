@@ -25,6 +25,8 @@ class Listing(Base):
     size_ping: Mapped[float | None] = mapped_column(Float, nullable=True)
     room_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     floor: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    thumbnail_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    listing_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     lng: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="NEW", index=True)

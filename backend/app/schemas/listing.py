@@ -25,6 +25,8 @@ class ListingOut(BaseModel):
     size_ping: Optional[float] = None
     room_type: Optional[str] = None
     floor: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    listing_updated_at: Optional[datetime] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
     status: str

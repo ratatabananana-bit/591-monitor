@@ -49,12 +49,15 @@ def list_listings(
     score_min: float | None = None,
     transit_max: int | None = None,
     keyword: str | None = None,
+    first_seen_after: str | None = None,
+    first_seen_before: str | None = None,
     sort_by: str = "score",
     sort_dir: str = "desc",
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
 ):
+    from datetime import datetime, timezone
     q = db.query(Listing)
     if status:
         q = q.filter(Listing.status == status)
@@ -66,6 +69,16 @@ def list_listings(
         q = q.filter(Listing.price <= price_max)
     if score_min is not None:
         q = q.filter(Listing.score >= score_min)
+    if first_seen_after:
+        try:
+            q = q.filter(Listing.first_seen_at >= datetime.fromisoformat(first_seen_after))
+        except ValueError:
+            pass
+    if first_seen_before:
+        try:
+            q = q.filter(Listing.first_seen_at <= datetime.fromisoformat(first_seen_before))
+        except ValueError:
+            pass
     if transit_max is not None:
         from sqlalchemy import select as sa_select
         subq = sa_select(CommuteResult.listing_id).where(
