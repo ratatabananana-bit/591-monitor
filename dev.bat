@@ -41,7 +41,7 @@ start "591 Backend" powershell -NoExit -Command ^
   "Write-Host '[BACKEND] Starting uvicorn...' -ForegroundColor Cyan; " ^
   "Write-Host '[BACKEND] Log file: %~dp0logs\backend.log' -ForegroundColor Gray; " ^
   "Write-Host ''; " ^
-  ".\venv\Scripts\uvicorn.exe app.main:app --reload --log-level debug 2>&1 | Tee-Object -FilePath '%~dp0logs\backend.log'"
+  "$ErrorActionPreference = 'Continue'; .\venv\Scripts\uvicorn.exe app.main:app --reload --log-level debug 2>&1 | Tee-Object -FilePath '%~dp0logs\backend.log'"
 
 :: ─── Brief pause so backend starts first ─────────────────────────────────────
 timeout /t 2 /nobreak >nul
