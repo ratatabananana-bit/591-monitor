@@ -6,8 +6,8 @@ import type { Listing, ListingFilters, ScanRun } from '../types'
 type Tab = 'active' | 'saved' | 'rejected'
 
 const TAB_STATUSES: Record<Tab, string[]> = {
-  active: ['NEW', 'ACTIVE', 'WATCHED', 'REAPPEARED', 'MISSING_ON_SEARCH'],
-  saved: ['SAVED', 'CONTACTED', 'VISITED'],
+  active: ['NEW', 'ACTIVE', 'REAPPEARED', 'MISSING_ON_SEARCH'],
+  saved: ['SAVED', 'WATCHED', 'CONTACTED', 'VISITED'],
   rejected: ['REJECTED', 'ARCHIVED', 'UNAVAILABLE'],
 }
 
