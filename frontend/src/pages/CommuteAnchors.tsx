@@ -8,32 +8,53 @@ export default function CommuteAnchors() {
   const [anchors, setAnchors] = useState<CommuteAnchor[]>([])
   const [editing, setEditing] = useState<Partial<CommuteAnchor> | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  const load = () => api.anchors.list().then(setAnchors)
+  const load = () => api.anchors.list().then(setAnchors).catch(e => setError(String(e)))
   useEffect(() => { load() }, [])
 
   const save = async () => {
     if (!editing) return
-    if (editId) await api.anchors.update(editId, editing)
-    else await api.anchors.create(editing)
-    setEditing(null)
-    setEditId(null)
-    load()
+    setError(null)
+    try {
+      if (editId) await api.anchors.update(editId, editing)
+      else await api.anchors.create(editing)
+      setEditing(null)
+      setEditId(null)
+      load()
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   const del = async (id: string) => {
     if (!confirm('Delete this anchor?')) return
-    await api.anchors.delete(id)
-    load()
+    setError(null)
+    try {
+      await api.anchors.delete(id)
+      load()
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   const recalculate = async () => {
-    await api.scans.recalculate()
-    alert('Commute recalculation queued')
+    try {
+      await api.scans.recalculate()
+      alert('Commute recalculation queued')
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
+      {error && (
+        <div className="bg-red-900 border border-red-700 text-red-200 px-4 py-3 rounded text-sm">
+          <strong>Error:</strong> {error}
+          <button onClick={() => setError(null)} className="ml-3 text-red-400 hover:text-white">✕</button>
+        </div>
+      )}
       <div className="flex justify-between items-center">
         <h1 className="text-xl font-bold">Commute Anchors</h1>
         <div className="flex gap-2">

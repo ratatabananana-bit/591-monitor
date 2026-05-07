@@ -1,10 +1,16 @@
 import logging
+import threading
 from pathlib import Path
 from contextlib import contextmanager
-from playwright.sync_api import sync_playwright, BrowserContext, Page
+from playwright.sync_api import sync_playwright, BrowserContext
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+# Thread-local storage: each thread gets its own BrowserManager instance.
+# Playwright's sync API uses greenlets that cannot cross thread boundaries,
+# so a shared singleton breaks when background tasks run in different threads.
+_local = threading.local()
 
 
 class BrowserManager:
@@ -32,7 +38,7 @@ class BrowserManager:
             locale="zh-TW",
             timezone_id="Asia/Taipei",
         )
-        logger.info("Browser started with profile: %s", profile_path)
+        logger.info("Browser started (thread %s) with profile: %s", threading.get_ident(), profile_path)
 
     def stop(self):
         if self._context:
@@ -41,11 +47,12 @@ class BrowserManager:
             self._playwright.stop()
         self._context = None
         self._playwright = None
+        logger.info("Browser stopped (thread %s)", threading.get_ident())
 
     @contextmanager
     def new_page(self):
         if not self._context:
-            raise RuntimeError("BrowserManager not started. Call start() first.")
+            raise RuntimeError("BrowserManager not started.")
         page = self._context.new_page()
         try:
             yield page
@@ -53,19 +60,19 @@ class BrowserManager:
             page.close()
 
 
-_browser_manager: BrowserManager | None = None
-
-
 def get_browser_manager() -> BrowserManager:
-    global _browser_manager
-    if _browser_manager is None:
-        _browser_manager = BrowserManager()
-        _browser_manager.start()
-    return _browser_manager
+    """Return this thread's BrowserManager, creating and starting one if needed."""
+    mgr = getattr(_local, "manager", None)
+    if mgr is None:
+        mgr = BrowserManager()
+        mgr.start()
+        _local.manager = mgr
+    return mgr
 
 
 def shutdown_browser():
-    global _browser_manager
-    if _browser_manager:
-        _browser_manager.stop()
-        _browser_manager = None
+    """Stop and discard this thread's BrowserManager."""
+    mgr = getattr(_local, "manager", None)
+    if mgr:
+        mgr.stop()
+        _local.manager = None

@@ -1,12 +1,43 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { ListingTable } from '../components/ListingTable'
 import { api } from '../api/client'
-import type { Listing, ListingFilters } from '../types'
+import type { Listing, ListingFilters, ScanRun } from '../types'
 
 const STATUSES = [
   '', 'NEW', 'ACTIVE', 'WATCHED', 'SAVED', 'REJECTED',
   'MISSING_ON_SEARCH', 'UNAVAILABLE', 'ARCHIVED', 'REAPPEARED',
 ]
+
+function ScanStatus({ runs, onDone }: { runs: ScanRun[]; onDone: () => void }) {
+  const latest = runs[0]
+  if (!latest) return null
+
+  const age = Date.now() - new Date(latest.started_at).getTime()
+  const isRecent = age < 60_000 // within last minute
+
+  if (!isRecent) return null
+
+  const color =
+    latest.status === 'running' ? 'border-yellow-600 bg-yellow-900/30 text-yellow-300' :
+    latest.status === 'success' ? 'border-green-600 bg-green-900/30 text-green-300' :
+    'border-red-600 bg-red-900/30 text-red-300'
+
+  return (
+    <div className={`border rounded px-4 py-2 text-sm flex items-center gap-3 ${color}`}>
+      {latest.status === 'running' && <span className="animate-spin">⟳</span>}
+      {latest.status === 'success' && <span>✓</span>}
+      {latest.status === 'failed' && <span>✕</span>}
+      <span>
+        Scan {latest.status}
+        {latest.status === 'success' && ` — ${latest.new_listings} new / ${latest.listings_found} found`}
+        {latest.status === 'failed' && latest.errors && ` — ${JSON.stringify(latest.errors)}`}
+      </span>
+      {latest.status !== 'running' && (
+        <button onClick={onDone} className="ml-auto opacity-60 hover:opacity-100">✕</button>
+      )}
+    </div>
+  )
+}
 
 export default function Listings() {
   const [listings, setListings] = useState<Listing[]>([])
@@ -16,6 +47,9 @@ export default function Listings() {
   })
   const [loading, setLoading] = useState(false)
   const [scanning, setScanning] = useState(false)
+  const [recentRuns, setRecentRuns] = useState<ScanRun[]>([])
+  const [showStatus, setShowStatus] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -30,15 +64,45 @@ export default function Listings() {
 
   useEffect(() => { load() }, [load])
 
+  const loadRuns = useCallback(async () => {
+    const runs = await api.scans.list()
+    setRecentRuns(runs.slice(0, 3))
+    // Stop polling when no running scans
+    if (!runs.some(r => r.status === 'running')) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+      // Reload listings since scan may have added new ones
+      load()
+    }
+  }, [load])
+
   const triggerScan = async () => {
     setScanning(true)
+    setShowStatus(true)
     try {
       const res = await api.scans.trigger()
-      alert(`Triggered ${res.triggered} scan(s)`)
+      if (res.triggered === 0) {
+        alert('No enabled search profiles found. Create one in Search Profiles first.')
+        setShowStatus(false)
+        return
+      }
+      // Poll for scan completion every 3 seconds
+      await loadRuns()
+      pollRef.current = setInterval(loadRuns, 3000)
+    } catch (e) {
+      alert(`Scan trigger failed: ${e}`)
+      setShowStatus(false)
     } finally {
       setScanning(false)
     }
   }
+
+  // Cleanup poll on unmount
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [])
 
   return (
     <div>
@@ -52,9 +116,15 @@ export default function Listings() {
           disabled={scanning}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-sm font-medium"
         >
-          {scanning ? 'Scanning...' : '⟳ Scan Now'}
+          {scanning ? '⟳ Scanning...' : '⟳ Scan Now'}
         </button>
       </div>
+
+      {showStatus && (
+        <div className="mb-4">
+          <ScanStatus runs={recentRuns} onDone={() => setShowStatus(false)} />
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-3 mb-4 p-3 bg-gray-800 rounded">
         <select
