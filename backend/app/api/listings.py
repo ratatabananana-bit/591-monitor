@@ -1,9 +1,9 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc
+from sqlalchemy import desc, asc, exists
 from ..database import get_db
-from ..models import Listing, ListingEvent, CommuteAnchor
+from ..models import Listing, ListingEvent, CommuteAnchor, CommuteResult
 from ..schemas import ListingOut, ListingAction, ListingEventOut, CommuteResultOut
 
 router = APIRouter(prefix="/listings", tags=["listings"])
@@ -67,6 +67,13 @@ def list_listings(
         q = q.filter(Listing.price <= price_max)
     if score_min is not None:
         q = q.filter(Listing.score >= score_min)
+    if transit_max is not None:
+        subq = (
+            db.query(CommuteResult.listing_id)
+            .filter(CommuteResult.transit_minutes <= transit_max)
+            .subquery()
+        )
+        q = q.filter(Listing.id.in_(subq))
     if keyword:
         q = q.filter(
             Listing.title.ilike(f"%{keyword}%") | Listing.address.ilike(f"%{keyword}%")

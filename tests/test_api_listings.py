@@ -54,3 +54,36 @@ def test_listing_action_invalid(client, db_session):
     listing = make_listing(db_session, "591-006")
     response = client.patch(f"/api/listings/{listing.id}/action", json={"action": "invalid"})
     assert response.status_code == 422
+
+
+def test_filter_by_transit_max(client, db_session):
+    from app.models import CommuteAnchor, CommuteResult
+    import uuid
+    from datetime import datetime, timezone
+
+    # Create listing with commute data
+    listing = make_listing(db_session, "591-007", status="ACTIVE")
+    anchor = CommuteAnchor(name="Office", address="somewhere", weight=1.0, enabled=True)
+    db_session.add(anchor)
+    db_session.flush()
+    cr = CommuteResult(
+        listing_id=listing.id,
+        anchor_id=anchor.id,
+        transit_minutes=20,
+        walk_minutes=10,
+        distance_meters=5000,
+    )
+    db_session.add(cr)
+    db_session.commit()
+
+    # Should find listing with transit <= 30
+    response = client.get("/api/listings?transit_max=30")
+    assert response.status_code == 200
+    ids = [i["id"] for i in response.json()["items"]]
+    assert str(listing.id) in ids
+
+    # Should NOT find listing with transit > 10
+    response = client.get("/api/listings?transit_max=10")
+    assert response.status_code == 200
+    ids = [i["id"] for i in response.json()["items"]]
+    assert str(listing.id) not in ids
