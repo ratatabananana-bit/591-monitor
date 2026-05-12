@@ -7,8 +7,6 @@ from pydantic import BaseModel
 class CommuteAnchorCreate(BaseModel):
     name: str
     address: str
-    lat: Optional[float] = None
-    lng: Optional[float] = None
     weight: float = 1.0
     enabled: bool = True
 

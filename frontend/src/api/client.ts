@@ -1,6 +1,6 @@
 import type {
   Listing, ListingsResponse, ListingEvent, ListingFilters,
-  SearchProfile, CommuteAnchor, ScanRun
+  SearchProfile, CommuteAnchor, ScanRun, TagRule
 } from '../types'
 
 const BASE = '/api'
@@ -35,7 +35,23 @@ export const api = {
         body: JSON.stringify({ action }),
       }),
 
+    bulkAction: (ids: string[], action: string) =>
+      request<{ updated: number }>('/listings/bulk-action', {
+        method: 'POST',
+        body: JSON.stringify({ ids, action }),
+      }),
+
+    delete: (id: string) => request<{ ok: boolean }>(`/listings/${id}`, { method: 'DELETE' }),
+
+    bulkDelete: (ids: string[]) =>
+      request<{ updated: number }>('/listings/bulk-action', {
+        method: 'POST',
+        body: JSON.stringify({ ids, action: 'delete' }),
+      }),
+
     events: (id: string) => request<ListingEvent[]>(`/listings/${id}/events`),
+
+    viewed: (id: string) => request<Listing>(`/listings/${id}/viewed`, { method: 'POST' }),
   },
 
   profiles: {
@@ -62,5 +78,34 @@ export const api = {
     trigger: (profileId?: string) =>
       request<{ triggered: number }>(`/scan-runs/trigger${profileId ? `?profile_id=${profileId}` : ''}`, { method: 'POST' }),
     recalculate: () => request<{ status: string }>('/scan-runs/recalculate-commutes', { method: 'POST' }),
+    backfillDates: () => request<{ status: string }>('/scan-runs/backfill-dates', { method: 'POST' }),
+    backfillPageText: () => request<{ status: string }>('/scan-runs/backfill-page-text', { method: 'POST' }),
+    rescore: () => request<{ status: string }>('/scan-runs/rescore', { method: 'POST' }),
+    cancel: (id: string) => request<{ status: string }>(`/scan-runs/${id}/cancel`, { method: 'POST' }),
+    clearDone: () => request<{ deleted: number }>('/scan-runs/done', { method: 'DELETE' }),
+    clearAlerted: () => request<{ deleted: number }>('/scan-runs/alerted', { method: 'DELETE' }),
   },
+
+  logs: {
+    fetch: (since: number) =>
+      request<LogEntry[]>(`/logs?since=${since}`),
+  },
+
+  tagRules: {
+    list: () => request<TagRule[]>('/tag-rules'),
+    create: (data: Partial<TagRule>) =>
+      request<TagRule>('/tag-rules', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Partial<TagRule>) =>
+      request<TagRule>(`/tag-rules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) => request<{ ok: boolean }>(`/tag-rules/${id}`, { method: 'DELETE' }),
+    retagAll: () => request<{ status: string }>('/tag-rules/retag-all', { method: 'POST' }),
+  },
+}
+
+export interface LogEntry {
+  id: number
+  t: number
+  level: string
+  logger: string
+  msg: string
 }

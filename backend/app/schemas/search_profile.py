@@ -12,6 +12,7 @@ class SearchProfileCreate(BaseModel):
     price_min: Optional[int] = None
     price_max: Optional[int] = None
     room_types: list[str] = []
+    min_ping: Optional[float] = None
     required_keywords: list[str] = []
     rejected_keywords: list[str] = []
     scan_interval_minutes: int = 30

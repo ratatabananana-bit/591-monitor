@@ -20,11 +20,11 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    shm_size: '2gb'
     ports:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/monitor
-      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -39,9 +39,9 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    shm_size: '2gb'
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/monitor
-      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       PLAYWRIGHT_PROFILE_PATH: /data/playwright-profile

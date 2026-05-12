@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Integer, Float, Boolean, DateTime, ForeignKey, UniqueConstraint
-from sqlalchemy import String
+from sqlalchemy import Integer, Float, Boolean, DateTime, ForeignKey, UniqueConstraint, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .listing import Base, utcnow, Listing
 
@@ -12,8 +11,6 @@ class CommuteAnchor(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100))
     address: Mapped[str] = mapped_column(String(300))
-    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
-    lng: Mapped[float | None] = mapped_column(Float, nullable=True)
     weight: Mapped[float] = mapped_column(Float, default=1.0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -32,6 +29,8 @@ class CommuteResult(Base):
     walk_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     transit_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     distance_meters: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scooter_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scooter_distance_meters: Mapped[int | None] = mapped_column(Integer, nullable=True)
     calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     listing: Mapped["Listing"] = relationship("Listing", back_populates="commute_results")

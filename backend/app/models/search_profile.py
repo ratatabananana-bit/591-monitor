@@ -18,6 +18,7 @@ class SearchProfile(Base):
     room_types: Mapped[list] = mapped_column(JSON, default=list)
     required_keywords: Mapped[list] = mapped_column(JSON, default=list)
     rejected_keywords: Mapped[list] = mapped_column(JSON, default=list)
+    min_ping: Mapped[float | None] = mapped_column(nullable=True)
     scan_interval_minutes: Mapped[int] = mapped_column(Integer, default=30)
     last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

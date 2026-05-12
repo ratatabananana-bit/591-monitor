@@ -1,5 +1,6 @@
 MISSING_THRESHOLD = 3
-USER_STATUSES = {"SAVED", "WATCHED", "REJECTED", "CONTACTED", "VISITED"}
+FROZEN_STATUSES = {"REJECTED"}
+STICKY_STATUSES = {"SAVED", "CHECKING"}
 
 
 def determine_new_status(
@@ -8,10 +9,16 @@ def determine_new_status(
     detail_exists: bool,
     missing_count: int,
 ) -> str:
+    # REJECTED: completely frozen, scanner never touches it
+    if current_status in FROZEN_STATUSES:
+        return current_status
+
+    # Detail page gone = archived (applies to SAVED/CHECKING too)
     if not detail_exists:
         return "ARCHIVED"
 
-    if current_status in USER_STATUSES:
+    # SAVED/CHECKING: keep status while listing still exists, ignore search misses
+    if current_status in STICKY_STATUSES:
         return current_status
 
     if found_in_search:
