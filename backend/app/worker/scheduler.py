@@ -14,25 +14,30 @@ def _scan_profile(profile_id_str: str) -> None:
 
 
 def reload_scheduler_jobs(scheduler: BackgroundScheduler) -> None:
-    for job in scheduler.get_jobs():
-        if job.id.startswith("profile_"):
-            scheduler.remove_job(job.id)
-
     db = SessionLocal()
     try:
         profiles = db.query(SearchProfile).filter(SearchProfile.enabled == True).all()
+        active_ids = {f"profile_{p.id}" for p in profiles}
+
+        # Remove jobs for deleted/disabled profiles
+        for job in scheduler.get_jobs():
+            if job.id.startswith("profile_") and job.id not in active_ids:
+                scheduler.remove_job(job.id)
+                logger.info("Removed job for deleted/disabled profile %s", job.id)
+
+        # Add jobs only for profiles that don't have one yet
         for profile in profiles:
             job_id = f"profile_{profile.id}"
-            scheduler.add_job(
-                _scan_profile,
-                trigger=IntervalTrigger(minutes=profile.scan_interval_minutes),
-                id=job_id,
-                args=[str(profile.id)],
-                replace_existing=True,
-                max_instances=1,
-                coalesce=True,
-            )
-            logger.info("Scheduled '%s' every %d min", profile.name, profile.scan_interval_minutes)
+            if scheduler.get_job(job_id) is None:
+                scheduler.add_job(
+                    _scan_profile,
+                    trigger=IntervalTrigger(minutes=profile.scan_interval_minutes),
+                    id=job_id,
+                    args=[str(profile.id)],
+                    max_instances=1,
+                    coalesce=True,
+                )
+                logger.info("Scheduled '%s' every %d min", profile.name, profile.scan_interval_minutes)
     finally:
         db.close()
 
