@@ -20,7 +20,7 @@ async def run_worker() -> None:
     logger.info("Scheduler started with %d jobs", len(scheduler.get_jobs()))
 
     app = None
-    if settings.telegram_bot_token:
+    if settings.telegram_bot_token and settings.telegram_polling:
         from telegram.ext import Application
         app = Application.builder().token(settings.telegram_bot_token).build()
         setup_bot(app)
@@ -28,6 +28,8 @@ async def run_worker() -> None:
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
         logger.info("Telegram bot started")
+    elif settings.telegram_bot_token:
+        logger.info("Telegram bot polling disabled (TELEGRAM_POLLING=false) — alerts only")
     else:
         logger.warning("TELEGRAM_BOT_TOKEN not set — bot disabled")
 
@@ -51,7 +53,7 @@ async def run_worker() -> None:
     from ..scraper.browser import shutdown_browser
     shutdown_browser()
 
-    if app:
+    if app and settings.telegram_polling:
         await app.updater.stop()
         await app.stop()
         await app.shutdown()

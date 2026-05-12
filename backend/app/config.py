@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     google_maps_api_key: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    telegram_polling: bool = True  # set False on secondary machines to avoid conflict
     secret_key: str = "dev-secret-key"
     log_level: str = "INFO"
     playwright_profile_path: str = "/data/playwright-profile"
