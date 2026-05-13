@@ -216,7 +216,7 @@ def _listing_matches_subscription(
 
 async def _run_alerts_async(db: Session, run: ScanRun | None = None) -> int:
     """Returns total number of listings successfully sent."""
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, timedelta
     def _utcnow():
         return datetime.now(timezone.utc)
 
@@ -224,6 +224,21 @@ async def _run_alerts_async(db: Session, run: ScanRun | None = None) -> int:
     if not settings.telegram_bot_token:
         logger.warning("_run_alerts_async: no telegram_bot_token, skipping")
         return 0
+
+    # Auto-heal stale "running" scan records older than 2 hours (crash/kill leftovers).
+    stale_cutoff = _utcnow() - timedelta(hours=2)
+    stale = db.query(ScanRun).filter(
+        ScanRun.status == "running",
+        ScanRun.job_type != "telegram_alerts",
+        ScanRun.started_at < stale_cutoff,
+    ).all()
+    for s in stale:
+        logger.warning("Marking stale scan run %s as failed (started %s)", s.id, s.started_at)
+        s.status = "failed"
+        s.finished_at = _utcnow()
+        s.errors = {"error": "auto-healed: process died without updating status"}
+    if stale:
+        db.commit()
 
     # Check if any scan still running — if so, last one to finish handles alerts
     running = db.query(ScanRun).filter(
