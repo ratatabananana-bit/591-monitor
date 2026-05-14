@@ -458,7 +458,10 @@ def trigger_subscription_alerts_sync() -> None:
     import concurrent.futures
     from datetime import datetime, timezone
 
+    logger.info("[alerts] trigger_subscription_alerts_sync: starting")
+
     def _run():
+        logger.info("[alerts] _run thread started")
         db = SessionLocal()
         run = ScanRun(
             started_at=datetime.now(timezone.utc),
@@ -471,6 +474,7 @@ def trigger_subscription_alerts_sync() -> None:
         )
         db.add(run)
         db.commit()
+        logger.info("[alerts] ScanRun created: %s", run.id)
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -480,12 +484,12 @@ def trigger_subscription_alerts_sync() -> None:
                     run.status = "success"
                 run.finished_at = datetime.now(timezone.utc)
                 db.commit()
-                logger.info("telegram_alerts run complete: %d sent", total_sent)
+                logger.info("[alerts] complete: %d sent", total_sent)
             finally:
                 loop.close()
                 asyncio.set_event_loop(None)
         except Exception as exc:
-            logger.error("trigger_subscription_alerts_sync error: %s", exc, exc_info=True)
+            logger.error("[alerts] error: %s", exc, exc_info=True)
             try:
                 run.status = "failed"
                 run.errors = {"error": str(exc)}
@@ -495,9 +499,17 @@ def trigger_subscription_alerts_sync() -> None:
                 pass
         finally:
             db.close()
+            logger.info("[alerts] _run thread done")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        executor.submit(_run).result()
+        future = executor.submit(_run)
+        try:
+            future.result(timeout=300)  # 5-minute hard timeout
+        except concurrent.futures.TimeoutError:
+            logger.error("[alerts] timed out after 5 minutes — alert skipped this cycle")
+        except Exception as exc:
+            logger.error("[alerts] executor error: %s", exc, exc_info=True)
+    logger.info("[alerts] trigger_subscription_alerts_sync: done")
 
 
 def trigger_delisted_alert(listing: Listing, db: Session) -> None:

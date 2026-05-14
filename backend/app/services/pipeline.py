@@ -93,13 +93,25 @@ def run_scan_for_profile(profile_id: uuid.UUID) -> None:
 
     # Watcher thread: runs in main process, waits for subprocess, then triggers alerts
     def _watcher():
-        p.join()
+        short = run_id[:8]
+        logger.info("[watcher:%s] waiting for subprocess", short)
+
+        # Wait up to 10 minutes; force-kill if it hangs (e.g. Playwright/DB cleanup deadlock)
+        p.join(timeout=600)
+        if p.is_alive():
+            logger.warning("[watcher:%s] subprocess still alive after 10 min — force-killing", short)
+            p.kill()
+            p.join(timeout=10)
+
         _scan_processes.pop(run_id, None)
+        logger.info("[watcher:%s] subprocess exited (exitcode=%s), triggering alerts", short, p.exitcode)
+
         try:
             from .subscription_alerts import trigger_subscription_alerts_sync
             trigger_subscription_alerts_sync()
+            logger.info("[watcher:%s] alert trigger complete", short)
         except Exception as exc:
-            logger.error("Post-scan alert trigger failed: %s", exc, exc_info=True)
+            logger.error("[watcher:%s] alert trigger failed: %s", short, exc, exc_info=True)
 
     threading.Thread(target=_watcher, daemon=True, name=f"alert-{run_id[:8]}").start()
 
