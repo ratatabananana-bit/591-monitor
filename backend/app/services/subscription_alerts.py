@@ -170,11 +170,10 @@ async def _send_listing_async(bot: Bot, chat_id: str, listing: Listing, profile_
                 logger.warning("Photo send attempt %d/3 failed for %s: %s", attempt + 1, listing.listing_id, exc)
                 if attempt < 2:
                     await asyncio.sleep(5)
-        # All photo attempts exhausted — do NOT fall back to text, retry next scan
-        logger.warning("All photo attempts failed for %s — will retry next scan", listing.listing_id)
-        return False
+        # All photo attempts exhausted — fall back to text-only so listing is never lost
+        logger.warning("All photo attempts failed for %s — falling back to text-only", listing.listing_id)
 
-    # No images — send text only
+    # No images (or photo fallback) — send text only
     try:
         await bot.send_message(
             chat_id=chat_id,
