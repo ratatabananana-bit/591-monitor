@@ -11,6 +11,7 @@ Flow:
 import asyncio
 import logging
 import threading
+import httpx
 from telegram import Bot, InputMediaPhoto
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
@@ -127,8 +128,26 @@ def _listing_action_keyboard(listing_id: str) -> InlineKeyboardMarkup:
     ]])
 
 
+_591_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Referer": "https://rent.591.com.tw/",
+}
+
+
+async def _download_image(url: str) -> bytes | None:
+    """Download an image via our server (avoids 591 CDN blocking Telegram's IPs)."""
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            r = await client.get(url, headers=_591_HEADERS)
+            if r.status_code == 200 and r.content:
+                return r.content
+    except Exception as exc:
+        logger.warning("Failed to download image %s: %s", url, exc)
+    return None
+
+
 async def _send_listing_async(bot: Bot, chat_id: str, listing: Listing, profile_names: dict | None = None) -> bool:
-    """Returns True if send succeeded with photos, False if fell back to text-only (will retry next scan)."""
+    """Returns True if send succeeded with photos, False will retry next scan."""
     caption = _format_listing(listing, profile_names or {})
     single_caption = caption if len(caption) <= 1024 else caption[:1021] + "…"
 
@@ -136,42 +155,52 @@ async def _send_listing_async(bot: Bot, chat_id: str, listing: Listing, profile_
     reply_markup = _listing_action_keyboard(listing.listing_id)
 
     if image_urls:
-        for attempt in range(6):
-            try:
-                if len(image_urls) == 1:
-                    await bot.send_photo(
-                        chat_id=chat_id,
-                        photo=image_urls[0],
-                        caption=single_caption,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=reply_markup,
-                        read_timeout=40,
-                        write_timeout=40,
-                        connect_timeout=15,
-                    )
-                else:
-                    media = [InputMediaPhoto(media=url) for url in image_urls[:8]]
-                    await bot.send_media_group(
-                        chat_id=chat_id,
-                        media=media,
-                        read_timeout=60,
-                        write_timeout=60,
-                        connect_timeout=15,
-                    )
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=caption,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=reply_markup,
-                        disable_web_page_preview=True,
-                    )
-                return True  # photos succeeded
-            except TelegramError as exc:
-                logger.warning("Photo send attempt %d/6 failed for %s: %s", attempt + 1, listing.listing_id, exc)
-                if attempt < 5:
-                    await asyncio.sleep(10)
-        # All photo attempts exhausted — will retry next scan
-        logger.warning("All photo attempts failed for %s — will retry next scan", listing.listing_id)
+        # Download images through our server — 591 CDN blocks Telegram's IPs
+        photo_bytes = await _download_image(image_urls[0])
+        extra_bytes = []
+        if photo_bytes and len(image_urls) > 1:
+            for url in image_urls[1:8]:
+                b = await _download_image(url)
+                if b:
+                    extra_bytes.append(b)
+
+        if photo_bytes:
+            for attempt in range(6):
+                try:
+                    if not extra_bytes:
+                        await bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo_bytes,
+                            caption=single_caption,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=reply_markup,
+                            read_timeout=40,
+                            write_timeout=40,
+                            connect_timeout=15,
+                        )
+                    else:
+                        media = [InputMediaPhoto(media=photo_bytes)] + [InputMediaPhoto(media=b) for b in extra_bytes]
+                        await bot.send_media_group(
+                            chat_id=chat_id,
+                            media=media,
+                            read_timeout=60,
+                            write_timeout=60,
+                            connect_timeout=15,
+                        )
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=caption,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=reply_markup,
+                            disable_web_page_preview=True,
+                        )
+                    return True
+                except TelegramError as exc:
+                    logger.warning("Photo send attempt %d/6 failed for %s: %s", attempt + 1, listing.listing_id, exc)
+                    if attempt < 5:
+                        await asyncio.sleep(10)
+        # Download failed or all send attempts exhausted — retry next scan
+        logger.warning("Photo send failed for %s — will retry next scan", listing.listing_id)
         return False
 
     # No images — send text only
