@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import signal
+import threading
 from ..config import settings
 from .scheduler import setup_scheduler
 from .bot import setup_bot
@@ -12,8 +13,39 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _start_log_queue_drainer() -> None:
+    """Drain the subprocess log queue in the worker process.
+
+    Scan subprocesses write logs to a multiprocessing.Queue via QueueHandler.
+    In the API process the queue is drained by the /api/logs endpoint.
+    In the worker process nobody reads it, so the pipe buffer fills up (~65 KB),
+    the subprocess's feeder thread blocks, the subprocess hangs on exit, and
+    p.join() in the watcher thread waits forever — silently stopping all alerts.
+
+    This drainer thread continuously empties the queue so subprocesses can exit
+    cleanly, and re-emits the log records to the worker's own logging handlers
+    so scan logs appear in docker logs.
+    """
+    from ..api.logs import get_log_queue
+    q = get_log_queue()
+
+    def _drain():
+        while True:
+            try:
+                record = q.get(timeout=1)
+                logging.getLogger(record.name).handle(record)
+            except Exception:
+                pass  # queue.Empty on timeout — keep looping
+
+    t = threading.Thread(target=_drain, daemon=True, name="log-queue-drainer")
+    t.start()
+    logger.info("Log queue drainer started")
+
+
 async def run_worker() -> None:
     logger.info("Starting worker...")
+
+    _start_log_queue_drainer()
 
     scheduler = setup_scheduler()
     scheduler.start()
