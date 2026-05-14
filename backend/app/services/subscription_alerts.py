@@ -136,7 +136,7 @@ async def _send_listing_async(bot: Bot, chat_id: str, listing: Listing, profile_
     reply_markup = _listing_action_keyboard(listing.listing_id)
 
     if image_urls:
-        for attempt in range(3):
+        for attempt in range(6):
             try:
                 if len(image_urls) == 1:
                     await bot.send_photo(
@@ -167,13 +167,14 @@ async def _send_listing_async(bot: Bot, chat_id: str, listing: Listing, profile_
                     )
                 return True  # photos succeeded
             except TelegramError as exc:
-                logger.warning("Photo send attempt %d/3 failed for %s: %s", attempt + 1, listing.listing_id, exc)
-                if attempt < 2:
-                    await asyncio.sleep(5)
-        # All photo attempts exhausted — fall back to text-only so listing is never lost
-        logger.warning("All photo attempts failed for %s — falling back to text-only", listing.listing_id)
+                logger.warning("Photo send attempt %d/6 failed for %s: %s", attempt + 1, listing.listing_id, exc)
+                if attempt < 5:
+                    await asyncio.sleep(10)
+        # All photo attempts exhausted — will retry next scan
+        logger.warning("All photo attempts failed for %s — will retry next scan", listing.listing_id)
+        return False
 
-    # No images (or photo fallback) — send text only
+    # No images — send text only
     try:
         await bot.send_message(
             chat_id=chat_id,
