@@ -12,6 +12,10 @@ import asyncio
 import logging
 import threading
 import httpx
+
+# Ensures only one alert run executes at a time within this process.
+# Prevents duplicate Telegram sends when multiple scans finish simultaneously.
+_alert_lock = threading.Lock()
 from telegram import Bot, InputMediaPhoto
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
@@ -460,6 +464,10 @@ def trigger_subscription_alerts_sync() -> None:
 
     logger.info("[alerts] trigger_subscription_alerts_sync: starting")
 
+    if not _alert_lock.acquire(blocking=False):
+        logger.info("[alerts] another alert run already in progress — skipping this cycle")
+        return
+
     def _run():
         logger.info("[alerts] _run thread started")
         db = SessionLocal()
@@ -501,14 +509,17 @@ def trigger_subscription_alerts_sync() -> None:
             db.close()
             logger.info("[alerts] _run thread done")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_run)
-        try:
-            future.result(timeout=300)  # 5-minute hard timeout
-        except concurrent.futures.TimeoutError:
-            logger.error("[alerts] timed out after 5 minutes — alert skipped this cycle")
-        except Exception as exc:
-            logger.error("[alerts] executor error: %s", exc, exc_info=True)
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run)
+            try:
+                future.result(timeout=300)  # 5-minute hard timeout
+            except concurrent.futures.TimeoutError:
+                logger.error("[alerts] timed out after 5 minutes — alert skipped this cycle")
+            except Exception as exc:
+                logger.error("[alerts] executor error: %s", exc, exc_info=True)
+    finally:
+        _alert_lock.release()
     logger.info("[alerts] trigger_subscription_alerts_sync: done")
 
 
