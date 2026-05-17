@@ -169,9 +169,10 @@ async def _send_listing_async(bot: Bot, chat_id: str, listing: Listing, profile_
                     extra_bytes.append(b)
 
         if photo_bytes:
-            for attempt in range(6):
-                try:
-                    if not extra_bytes:
+            if not extra_bytes:
+                # Single photo — caption is included, safe to retry whole thing
+                for attempt in range(6):
+                    try:
                         await bot.send_photo(
                             chat_id=chat_id,
                             photo=photo_bytes,
@@ -182,15 +183,28 @@ async def _send_listing_async(bot: Bot, chat_id: str, listing: Listing, profile_
                             write_timeout=40,
                             connect_timeout=15,
                         )
-                    else:
-                        media = [InputMediaPhoto(media=photo_bytes)] + [InputMediaPhoto(media=b) for b in extra_bytes]
-                        await bot.send_media_group(
-                            chat_id=chat_id,
-                            media=media,
-                            read_timeout=60,
-                            write_timeout=60,
-                            connect_timeout=15,
-                        )
+                        return True
+                    except TelegramError as exc:
+                        logger.warning("Photo send attempt %d/6 failed for %s: %s", attempt + 1, listing.listing_id, exc)
+                        if attempt < 5:
+                            await asyncio.sleep(10)
+            else:
+                # Multi-photo: send_media_group and send_message are separate calls.
+                # Track each independently so a successful media_group is never re-sent
+                # on retry (which caused duplicate spam when only the text message failed).
+                media_sent = False
+                for attempt in range(6):
+                    try:
+                        if not media_sent:
+                            media = [InputMediaPhoto(media=photo_bytes)] + [InputMediaPhoto(media=b) for b in extra_bytes]
+                            await bot.send_media_group(
+                                chat_id=chat_id,
+                                media=media,
+                                read_timeout=60,
+                                write_timeout=60,
+                                connect_timeout=15,
+                            )
+                            media_sent = True
                         await bot.send_message(
                             chat_id=chat_id,
                             text=caption,
@@ -198,11 +212,18 @@ async def _send_listing_async(bot: Bot, chat_id: str, listing: Listing, profile_
                             reply_markup=reply_markup,
                             disable_web_page_preview=True,
                         )
+                        return True
+                    except TelegramError as exc:
+                        logger.warning("Send attempt %d/6 failed for %s (media_sent=%s): %s",
+                                       attempt + 1, listing.listing_id, media_sent, exc)
+                        if attempt < 5:
+                            await asyncio.sleep(10)
+                # If photos sent but text never made it, still count as success —
+                # photos were delivered, don't re-send on next scan
+                if media_sent:
+                    logger.warning("Photos sent but text failed for %s — marking as sent anyway", listing.listing_id)
                     return True
-                except TelegramError as exc:
-                    logger.warning("Photo send attempt %d/6 failed for %s: %s", attempt + 1, listing.listing_id, exc)
-                    if attempt < 5:
-                        await asyncio.sleep(10)
+
         # Download failed or all send attempts exhausted — retry next scan
         logger.warning("Photo send failed for %s — will retry next scan", listing.listing_id)
         return False
