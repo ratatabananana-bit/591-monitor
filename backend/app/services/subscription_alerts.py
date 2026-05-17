@@ -383,6 +383,29 @@ async def _run_alerts_async(db: Session, run: ScanRun | None = None) -> int:
         )
 
         for listing in to_send:
+            alert_type = "new" if listing.status == "NEW" else "reappeared"
+
+            # Reserve this listing in DB BEFORE sending — cross-process atomic guard.
+            # If the API container and worker container both trigger alerts simultaneously,
+            # only one will succeed here; the other gets IntegrityError and skips.
+            # If the send fails, we delete the reservation so the next cycle retries.
+            try:
+                reserved = TelegramAlertedListing(
+                    subscription_id=sub.id,
+                    listing_id=listing.id,
+                    alert_type=alert_type,
+                )
+                db.add(reserved)
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                logger.info(
+                    "Listing %s sub %s already reserved/sent by another process — skipping",
+                    listing.listing_id, sub.id,
+                )
+                continue
+
+            # Reservation committed — now send to Telegram
             ok = False
             try:
                 ok = await _send_listing_async(bot, sub.chat_id, listing, profile_names)
@@ -390,26 +413,20 @@ async def _run_alerts_async(db: Session, run: ScanRun | None = None) -> int:
                 logger.error("Error sending listing %s: %s", listing.listing_id, exc)
 
             if not ok:
-                # Send failed or photos not delivered — skip marking, retry next scan
+                # Send failed — remove reservation so next cycle retries
+                try:
+                    db.delete(reserved)
+                    db.commit()
+                except Exception as del_exc:
+                    logger.warning("Failed to delete reservation for %s: %s", listing.listing_id, del_exc)
+                    db.rollback()
                 await asyncio.sleep(2)
                 continue
 
-            # Mark as alerted — ignore duplicate (race condition between parallel scan completions)
-            try:
-                db.add(TelegramAlertedListing(
-                    subscription_id=sub.id,
-                    listing_id=listing.id,
-                    alert_type="new" if listing.status == "NEW" else "reappeared",
-                ))
+            total_sent += 1
+            if run:
+                run.new_listings = total_sent
                 db.commit()
-                total_sent += 1
-                if run:
-                    run.new_listings = total_sent
-                    db.commit()
-            except IntegrityError:
-                db.rollback()
-                logger.debug("Duplicate alert skipped for listing %s sub %s", listing.listing_id, sub.id)
-
             await asyncio.sleep(1)  # pace between successful sends
 
     return total_sent
