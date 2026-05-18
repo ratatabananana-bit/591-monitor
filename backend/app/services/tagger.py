@@ -11,6 +11,7 @@ Tag format:
   "profile:NAME"     — listing matched by that search profile
 """
 import logging
+import re
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -18,6 +19,25 @@ from ..models import Listing, TagRule, ScanRun, SearchProfile
 from ..models.listing import ListingEvent
 
 logger = logging.getLogger(__name__)
+
+
+_NEGATION_PREFIXES = ('不', '無', '非')
+
+
+def _keyword_matches(keyword: str, text: str) -> bool:
+    """Check if keyword appears in text.
+
+    If the keyword starts with a negation character (不/無/非) it is matched
+    literally — e.g. '不走路' finds exactly '不走路'.
+
+    Otherwise a negative lookbehind is automatically applied so that the
+    keyword is NOT matched when immediately preceded by 不/無/非 — e.g.
+    '可寵' will match '可寵' but not '不可寵' or '無可寵'.
+    """
+    if keyword.startswith(_NEGATION_PREFIXES):
+        return keyword in text
+    pattern = r'(?<!不)(?<!無)(?<!非)' + re.escape(keyword)
+    return bool(re.search(pattern, text))
 
 
 def _utcnow() -> datetime:
@@ -91,8 +111,8 @@ def apply_tags(
         kws = [k.lower() for k in (rule.keywords or [])]
         rkws = [k.lower() for k in (rule.reject_keywords or [])]
 
-        positive = any(k in text for k in kws) if kws else False
-        negative = any(k in text for k in rkws) if rkws else False
+        positive = any(_keyword_matches(k, text) for k in kws) if kws else False
+        negative = any(_keyword_matches(k, text) for k in rkws) if rkws else False
 
         if negative:
             new_tags.append(f"-{tag}")
