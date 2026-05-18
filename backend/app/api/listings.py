@@ -234,6 +234,34 @@ def bulk_listing_action(body: BulkAction, db: Session = Depends(get_db)):
     return {"updated": updated}
 
 
+@router.post("/{listing_id}/rescrape-photos")
+def rescrape_photos(listing_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Re-fetch image URLs for a single listing from 591 using Playwright."""
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    from ..scraper.scraper_591 import scrape_listing_detail
+    detail = scrape_listing_detail(listing.listing_id)
+
+    if not detail:
+        raise HTTPException(status_code=502, detail="Scrape failed — listing may be unavailable")
+
+    if "image_urls" in detail:
+        listing.image_urls = detail["image_urls"]
+        if detail["image_urls"]:
+            listing.thumbnail_url = detail["image_urls"][0]
+        db.add(ListingEvent(
+            listing_id=listing.id,
+            event_type="photos_rescraped",
+            new_value={"count": len(detail["image_urls"])},
+        ))
+        db.commit()
+        db.refresh(listing)
+
+    return _serialize_listing(listing, _build_profile_map(db))
+
+
 @router.get("/{listing_id}/events", response_model=list[ListingEventOut])
 def get_listing_events(listing_id: uuid.UUID, db: Session = Depends(get_db)):
     listing = db.query(Listing).filter(Listing.id == listing_id).first()

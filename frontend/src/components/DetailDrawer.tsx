@@ -70,12 +70,15 @@ export function DetailDrawer({
   const [failedCount, setFailedCount] = useState(0)
   const [lightbox, setLightbox] = useState(false)
   const [actioning, setActioning] = useState(false)
+  const [rescraping, setRescraping] = useState(false)
+  const [localImageUrls, setLocalImageUrls] = useState<string[] | null>(null)
 
   // Reload events and reset image index whenever listing changes
   useEffect(() => {
     setEvents(null)
     setImgIdx(0)
     setFailedCount(0)
+    setLocalImageUrls(null)
     setEvLoading(true)
     let cancelled = false
     api.listings.events(listing.id).then(ev => {
@@ -88,8 +91,9 @@ export function DetailDrawer({
     return () => { cancelled = true }
   }, [listing.id])
 
-  const images = listing.image_urls?.length > 0
-    ? listing.image_urls
+  const rawUrls = localImageUrls ?? listing.image_urls
+  const images = rawUrls?.length > 0
+    ? rawUrls
     : listing.thumbnail_url ? [listing.thumbnail_url] : []
 
   // Close lightbox on Escape
@@ -128,6 +132,20 @@ export function DetailDrawer({
     await api.listings.delete(listing.id)
     onClose()
     onRefresh()
+  }
+
+  const doRescrapePhotos = async () => {
+    setRescraping(true)
+    setImgIdx(0)
+    setFailedCount(0)
+    try {
+      const updated = await api.listings.rescrapePhotos(listing.id)
+      setLocalImageUrls(updated.image_urls ?? [])
+    } catch (e) {
+      alert('Rescrape failed — listing may be unavailable on 591.')
+    } finally {
+      setRescraping(false)
+    }
   }
 
   const dot = STATUS_DOT[listing.status] ?? 'var(--muted-2)'
@@ -249,6 +267,9 @@ export function DetailDrawer({
           <button className="wb-btn" onClick={() => doAction('save')} disabled={actioning}>Save</button>
           <button className="wb-btn" onClick={() => doAction('checking')} disabled={actioning}>Checking</button>
           <button className="wb-btn" onClick={() => doAction('reject')} disabled={actioning}>Reject</button>
+          <button className="wb-btn" onClick={doRescrapePhotos} disabled={rescraping} title="Re-fetch photos from 591">
+            {rescraping ? 'Scraping…' : '🔄 Photos'}
+          </button>
           <button className="wb-btn danger" onClick={doDelete}>Delete</button>
         </div>
 

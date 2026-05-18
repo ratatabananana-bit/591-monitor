@@ -52,6 +52,9 @@ export const api = {
     events: (id: string) => request<ListingEvent[]>(`/listings/${id}/events`),
 
     viewed: (id: string) => request<Listing>(`/listings/${id}/viewed`, { method: 'POST' }),
+
+    rescrapePhotos: (id: string) =>
+      request<Listing>(`/listings/${id}/rescrape-photos`, { method: 'POST' }),
   },
 
   profiles: {
