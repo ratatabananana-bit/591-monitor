@@ -144,7 +144,7 @@ def retag_all_listings(db: Session) -> int:
         db.expunge(rule)
     profiles = db.query(SearchProfile).all()
     profile_names = {str(p.id): p.name for p in profiles}
-    statuses = ["NEW", "ACTIVE", "REAPPEARED", "CHECKING", "SAVED", "MISSING_ON_SEARCH", "FILTERED", "REJECTED"]
+    statuses = ["NEW", "ACTIVE", "REAPPEARED", "CHECKING", "SAVED", "MISSING_ON_SEARCH"]
     listings = db.query(Listing).filter(Listing.status.in_(statuses)).all()
     updated = 0
     for listing in listings:
@@ -171,7 +171,7 @@ def retag_all_tracked() -> None:
             db.expunge(rule)
         profiles = db.query(SearchProfile).all()
         profile_names = {str(p.id): p.name for p in profiles}
-        statuses = ["NEW", "ACTIVE", "REAPPEARED", "CHECKING", "SAVED", "MISSING_ON_SEARCH", "FILTERED", "REJECTED"]
+        statuses = ["NEW", "ACTIVE", "REAPPEARED", "CHECKING", "SAVED", "MISSING_ON_SEARCH"]
         listings = db.query(Listing).filter(Listing.status.in_(statuses)).all()
         run.listings_found = len(listings)
         db.commit()  # safe: rules are expunged, won't be expired
