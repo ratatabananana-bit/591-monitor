@@ -265,10 +265,9 @@ export function DetailDrawer({
             Open in 591 ↗
           </a>
           <button className="wb-btn" onClick={() => doAction('save')} disabled={actioning}>Save</button>
-          <button className="wb-btn" onClick={() => doAction('checking')} disabled={actioning}>Checking</button>
           <button className="wb-btn" onClick={() => doAction('reject')} disabled={actioning}>Reject</button>
           <button className="wb-btn" onClick={doRescrapePhotos} disabled={rescraping} title="Re-fetch photos from 591">
-            {rescraping ? 'Scraping…' : '🔄 Photos'}
+            {rescraping ? 'Scraping…' : 'Rescrape Photos'}
           </button>
           <button className="wb-btn danger" onClick={doDelete}>Delete</button>
         </div>
