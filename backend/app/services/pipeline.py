@@ -359,7 +359,14 @@ def _upsert_listing(db: Session, raw: dict, profile_id: uuid.UUID) -> tuple[List
 
     # Always update title if the landlord changed it
     if raw.get("title") and raw["title"] != existing.title:
+        old_title = existing.title
         existing.title = raw["title"]
+        db.add(ListingEvent(
+            listing_id=existing.id,
+            event_type="title_change",
+            old_value={"title": old_title},
+            new_value={"title": raw["title"]},
+        ))
         was_updated = True
 
     # Fill in nulls with richer data (don't overwrite existing values for these)
