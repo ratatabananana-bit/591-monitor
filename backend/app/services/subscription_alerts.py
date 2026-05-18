@@ -371,24 +371,19 @@ async def _run_alerts_async(db: Session, run: ScanRun | None = None) -> int:
             continue
 
         logger.info(
-            "Sending %d listings to subscription %s (%s)",
+            "Attempting to reserve %d listings for subscription %s (%s)",
             len(to_send), sub.chat_id, sub.chat_name or "?"
         )
 
-        # Header message
-        tag_str = " ".join(sub.subscribed_tags)
-        await _send_text_async(
-            bot, sub.chat_id,
-            f"🔔 <b>{len(to_send)} new listing{'s' if len(to_send) > 1 else ''}</b> matching {_esc(tag_str)}"
-        )
-
+        # Phase 1: Reserve all listings atomically before sending anything.
+        # Both containers may reach here simultaneously with the same to_send list.
+        # Committing each reservation first means only one container wins each
+        # listing via the DB unique constraint — the loser gets IntegrityError
+        # and is excluded. The header is then only sent if we own ≥1 listing,
+        # preventing duplicate "🔔 N new listings" messages.
+        reserved_listings: list[tuple] = []  # (listing, reserved_record)
         for listing in to_send:
             alert_type = "new" if listing.status == "NEW" else "reappeared"
-
-            # Reserve this listing in DB BEFORE sending — cross-process atomic guard.
-            # If the API container and worker container both trigger alerts simultaneously,
-            # only one will succeed here; the other gets IntegrityError and skips.
-            # If the send fails, we delete the reservation so the next cycle retries.
             try:
                 reserved = TelegramAlertedListing(
                     subscription_id=sub.id,
@@ -397,15 +392,30 @@ async def _run_alerts_async(db: Session, run: ScanRun | None = None) -> int:
                 )
                 db.add(reserved)
                 db.commit()
+                reserved_listings.append((listing, reserved))
             except IntegrityError:
                 db.rollback()
                 logger.info(
-                    "Listing %s sub %s already reserved/sent by another process — skipping",
+                    "Listing %s sub %s already reserved by another process — skipping",
                     listing.listing_id, sub.id,
                 )
-                continue
 
-            # Reservation committed — now send to Telegram
+        if not reserved_listings:
+            logger.info("Sub %s: no listings reserved (all claimed by another process)", sub.chat_id)
+            continue
+
+        logger.info("Sub %s: reserved %d/%d listings — sending now", sub.chat_id, len(reserved_listings), len(to_send))
+
+        # Phase 2: Send header, then each reserved listing.
+        # Header count reflects only what this process actually owns.
+        tag_str = " ".join(sub.subscribed_tags)
+        n = len(reserved_listings)
+        await _send_text_async(
+            bot, sub.chat_id,
+            f"🔔 <b>{n} new listing{'s' if n > 1 else ''}</b> matching {_esc(tag_str)}"
+        )
+
+        for listing, reserved in reserved_listings:
             ok = False
             try:
                 ok = await _send_listing_async(bot, sub.chat_id, listing, profile_names)
