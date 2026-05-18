@@ -18,7 +18,7 @@ import httpx
 _alert_lock = threading.Lock()
 from telegram import Bot, InputMediaPhoto
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import TelegramError, TimedOut
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -211,8 +211,25 @@ async def _send_listing_async(bot: Bot, chat_id: str, listing: Listing, profile_
                             parse_mode=ParseMode.HTML,
                             reply_markup=reply_markup,
                             disable_web_page_preview=True,
+                            read_timeout=30,
+                            write_timeout=30,
+                            connect_timeout=15,
                         )
                         return True
+                    except TimedOut as exc:
+                        # On timeout we cannot know if Telegram delivered the message.
+                        # Retrying risks a duplicate — stop here and treat as success.
+                        if media_sent:
+                            logger.warning(
+                                "send_message timed out for %s (media already sent) — "
+                                "treating as delivered to avoid duplicate text", listing.listing_id
+                            )
+                            return True
+                        # Timed out before media was sent — safe to retry whole thing
+                        logger.warning("send_media_group timed out for %s attempt %d/6 — retrying",
+                                       listing.listing_id, attempt + 1)
+                        if attempt < 5:
+                            await asyncio.sleep(10)
                     except TelegramError as exc:
                         logger.warning("Send attempt %d/6 failed for %s (media_sent=%s): %s",
                                        attempt + 1, listing.listing_id, media_sent, exc)
@@ -229,18 +246,28 @@ async def _send_listing_async(bot: Bot, chat_id: str, listing: Listing, profile_
         return False
 
     # No images — send text only
-    try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=caption,
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup,
-            disable_web_page_preview=True,
-        )
-        return True
-    except TelegramError as exc:
-        logger.warning("Failed to send listing %s to %s: %s", listing.listing_id, chat_id, exc)
-        raise
+    for attempt in range(6):
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+                read_timeout=30,
+                write_timeout=30,
+                connect_timeout=15,
+            )
+            return True
+        except TimedOut:
+            # Timeout — message likely delivered, stop retrying to avoid duplicate
+            logger.warning("send_message timed out for %s (text-only) — treating as delivered", listing.listing_id)
+            return True
+        except TelegramError as exc:
+            logger.warning("Text send attempt %d/6 failed for %s: %s", attempt + 1, listing.listing_id, exc)
+            if attempt < 5:
+                await asyncio.sleep(10)
+    return False
 
 
 async def _send_text_async(bot: Bot, chat_id: str, text: str) -> None:
