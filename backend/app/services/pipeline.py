@@ -357,8 +357,13 @@ def _upsert_listing(db: Session, raw: dict, profile_id: uuid.UUID) -> tuple[List
         if raw["price"] < old_price:
             pass  # price drop noted in listing events
 
-    # Fill in nulls with richer data
-    for field in ("title", "district", "size_ping", "room_type", "floor", "thumbnail_url", "price"):
+    # Always update title if the landlord changed it
+    if raw.get("title") and raw["title"] != existing.title:
+        existing.title = raw["title"]
+        was_updated = True
+
+    # Fill in nulls with richer data (don't overwrite existing values for these)
+    for field in ("district", "size_ping", "room_type", "floor", "thumbnail_url", "price"):
         val = raw.get(field)
         if val and not getattr(existing, field):
             setattr(existing, field, val)
