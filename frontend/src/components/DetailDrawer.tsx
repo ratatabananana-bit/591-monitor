@@ -20,6 +20,49 @@ function fmtNT(n: number | null | undefined) {
   return 'NT$' + n.toLocaleString()
 }
 
+function fmtEvent(ev: ListingEvent): { label: string; detail: string } {
+  const o = (ev.old_value ?? {}) as Record<string, any>
+  const n = (ev.new_value ?? {}) as Record<string, any>
+  const trunc = (s: string | null | undefined) =>
+    s && s.length > 32 ? s.slice(0, 30) + '…' : (s ?? '')
+
+  switch (ev.event_type) {
+    case 'new':
+      return { label: 'First seen', detail: n.price ? `NT$${Number(n.price).toLocaleString()}` : '' }
+
+    case 'price_change': {
+      const label = Number(n.price) < Number(o.price) ? 'Price drop' : 'Price rise'
+      return { label, detail: `NT$${Number(o.price).toLocaleString()} → NT$${Number(n.price).toLocaleString()}` }
+    }
+
+    case 'status_change':
+      return { label: 'Status', detail: `${o.status ?? ''} → ${n.status ?? ''}` }
+
+    case 'title_change':
+      return { label: 'Title updated', detail: `${trunc(o.title)} → ${trunc(n.title)}` }
+
+    case 'tags_updated': {
+      const oldSet = new Set<string>(o.tags ?? [])
+      const newSet = new Set<string>(n.tags ?? [])
+      const added = [...newSet].filter(t => !oldSet.has(t)).map(t => `+${t}`)
+      const removed = [...oldSet].filter(t => !newSet.has(t)).map(t => `-${t}`)
+      return { label: 'Tags', detail: [...added, ...removed].join(' · ') || '—' }
+    }
+
+    case 'reappeared':
+      return { label: 'Reappeared', detail: '' }
+
+    case 'auto_rejected':
+      return { label: 'Auto-filtered', detail: (n.reason ?? '').replace(/_/g, ' ') }
+
+    case 'photos_rescraped':
+      return { label: 'Photos updated', detail: n.count ? `${n.count} photos` : '' }
+
+    default:
+      return { label: ev.event_type.replace(/_/g, ' '), detail: '' }
+  }
+}
+
 function fmtDate(d: string | null | undefined) {
   if (!d) return '—'
   const dt = new Date(d)
@@ -409,17 +452,16 @@ export function DetailDrawer({
           {events?.length === 0 && <span className="muted small">No events</span>}
           {events && events.length > 0 && (
             <div className="history">
-              {events.map(ev => (
-                <div key={ev.id} className="history-row">
-                  <span className="mono small muted">{fmtDate(ev.created_at)}</span>
-                  <span className="history-what">{ev.event_type.replace(/_/g, ' ')}</span>
-                  <span className="muted small">
-                    {ev.old_value && ev.new_value
-                      ? `${JSON.stringify(ev.old_value)} → ${JSON.stringify(ev.new_value)}`
-                      : ev.new_value ? JSON.stringify(ev.new_value) : ''}
-                  </span>
-                </div>
-              ))}
+              {events.map(ev => {
+                const { label, detail } = fmtEvent(ev)
+                return (
+                  <div key={ev.id} className="history-row">
+                    <span className="mono small muted">{fmtDate(ev.created_at)}</span>
+                    <span className="history-what">{label}</span>
+                    {detail && <span className="muted small">{detail}</span>}
+                  </div>
+                )
+              })}
             </div>
           )}
         </section>
