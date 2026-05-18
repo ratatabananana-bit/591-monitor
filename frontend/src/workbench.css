@@ -330,6 +330,9 @@ td.c-check { width: 36px; padding-left: 12px !important; padding-right: 6px !imp
 .price-delta { font-size: 10px; font-family: var(--mono); }
 .price-delta.down { color: var(--warn); }
 .price-delta.up { color: var(--muted); }
+.price-chg { font-size: 10px; font-family: var(--mono); margin-left: 3px; }
+.price-dn { color: var(--ok); }
+.price-up { color: var(--danger); }
 
 /* ─── type / floor / size ─── */
 .type-chip { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: var(--bg-3); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }

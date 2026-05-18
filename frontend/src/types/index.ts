@@ -42,6 +42,7 @@ export interface Listing {
   first_seen_at: string
   last_seen_at: string
   commute_results: CommuteResult[]
+  price_original: number | null
 }
 
 export interface ListingsResponse {

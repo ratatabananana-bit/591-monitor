@@ -319,7 +319,16 @@ export function DetailDrawer({
         <div className="kv-grid">
           <div className="kv">
             <span className="kv-label">Price</span>
-            <span className="kv-val mono">{fmtNT(listing.price)}<span className="muted">/mo</span></span>
+            <span className="kv-val mono">
+              {fmtNT(listing.price)}<span className="muted">/mo</span>
+              {listing.price_original != null && listing.price != null && (
+                <span className={listing.price < listing.price_original ? 'price-chg price-dn' : 'price-chg price-up'}
+                  title={`Was ${fmtNT(listing.price_original)}`}>
+                  {listing.price < listing.price_original ? ' ▼' : ' ▲'}
+                  {fmtNT(listing.price_original)}
+                </span>
+              )}
+            </span>
           </div>
           <div className="kv">
             <span className="kv-label">Per ping</span>

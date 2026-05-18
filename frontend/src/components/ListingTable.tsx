@@ -352,7 +352,14 @@ export function ListingTable({
                   </td>
                   <td><ScoreCell score={row.score} /></td>
                   <td className="c-title"><TitleCell listing={row} onTagClick={onTagClick} /></td>
-                  <td><span className="price-main">{fmtNT(row.price)}</span></td>
+                  <td>
+                    <span className="price-main">{fmtNT(row.price)}</span>
+                    {row.price_original != null && row.price != null && (
+                      <span className={row.price < row.price_original ? 'price-chg price-dn' : 'price-chg price-up'}>
+                        {row.price < row.price_original ? '▼' : '▲'}
+                      </span>
+                    )}
+                  </td>
                   <td className="mono muted" style={{ fontSize: 12 }}>
                     {pp != null ? pp.toLocaleString() : '—'}
                     {pp != null && <span className="muted small">/p</span>}

@@ -54,6 +54,9 @@ def _serialize_listing(listing: Listing, profile_map: dict[str, str] | None = No
     data["matched_profile_names"] = [pm[pid] for pid in (listing.matched_profiles or []) if pid in pm]
     data["filtered_by_profile_names"] = [pm[pid] for pid in (listing.filtered_by_profiles or []) if pid in pm]
     data["rejected_by_profile_names"] = [pm[pid] for pid in (listing.rejected_by_profiles or []) if pid in pm]
+    # Expose original price for price-change indicator in the UI
+    raw_price = (listing.raw_data or {}).get("price")
+    data["price_original"] = int(raw_price) if raw_price and raw_price != listing.price else None
     return data
 
 
